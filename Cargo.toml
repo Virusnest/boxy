@@ -5,3 +5,6 @@ edition = "2024"
 
 [dependencies]
 nix = { version = "0.31.3", features = ["mount", "fs", "sched", "user"] }
+libc = "0.2.186"
+libseccomp = "0.4.0"
+caps = "0.5.6"
