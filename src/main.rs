@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{exit, Command};
 use caps::{CapSet, Capability};
+use libc::CLONE_NEWIPC;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::unistd::{chdir, execv, execve, fork, getgid, getuid, pivot_root, setgid, setuid, ForkResult, Gid, Uid};
 use nix::sched::{unshare, CloneFlags};
@@ -70,7 +71,9 @@ fn setup_sandbox(home_path: &Path) {
         Ok(ForkResult::Child) => {
 
             unshare(CloneFlags::CLONE_NEWUSER).unwrap();
-
+            for cap in caps::all() {
+                let _ = caps::drop(None, CapSet::Bounding, cap);
+            }
 
             nix::unistd::write(&child_to_parent_w, &[1]).unwrap();
             println!("unshared newUser");
@@ -78,7 +81,7 @@ fn setup_sandbox(home_path: &Path) {
             let mut buf = [0u8; 1];
             nix::unistd::read(&parent_to_child_r, &mut buf).unwrap();
             println!("unshared Maps Written");
-            unshare(CloneFlags::CLONE_NEWNS |CloneFlags::CLONE_NEWPID|CloneFlags::CLONE_NEWUTS).unwrap();
+            unshare(CloneFlags::CLONE_NEWNS |CloneFlags::CLONE_NEWPID|CloneFlags::CLONE_NEWUTS|CloneFlags::CLONE_NEWIPC).unwrap();
 
             match unsafe { fork() } {
                 Ok(ForkResult::Parent { child, .. }) => {
@@ -156,53 +159,55 @@ fn setup_sandbox(home_path: &Path) {
                     // mount(Some("devtmpfs"), "/dev", Some("devtmpfs"), MsFlags::empty(), None::<&str>).unwrap();
                     use std::os::unix::process::CommandExt;
 
-                    unsafe {
-                        libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0);
-                    }
+                    // unsafe {
+                    //     libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0);
+                    // }
 
-                    setuid(Uid::from_raw(1000)).unwrap();
+                    // setuid(Uid::from_raw(1000)).unwrap();
+                    // setgid(Gid::from_raw(1000)).unwrap();
                     setgid(Gid::from_raw(1000)).unwrap();
-
+                    setuid(Uid::from_raw(1000)).unwrap();
+                    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0); }
                     // 2. Permitted set survives (thanks to keepcaps), but Effective was
                     //    cleared by the uid change. Raise CAP_SYS_PTRACE back into Effective
                     //    so crashpad's ptrace-based /proc/<pid>/mem reads succeed.
-                    caps::raise(None, CapSet::Effective, Capability::CAP_SYS_PTRACE)
-                        .expect("raise effective CAP_SYS_PTRACE");
-
-                    // 3. Put it in Inheritable + Ambient so it survives the exec() into bash/Discord.
-                    caps::raise(None, CapSet::Inheritable, Capability::CAP_SYS_PTRACE)
-                        .expect("raise inheritable CAP_SYS_PTRACE");
-                    caps::raise(None, CapSet::Ambient, Capability::CAP_SYS_PTRACE)
-                        .expect("raise ambient CAP_SYS_PTRACE");
+                    // caps::raise(None, CapSet::Effective, Capability::CAP_SYS_PTRACE)
+                    //     .expect("raise effective CAP_SYS_PTRACE");
+                    //
+                    // // 3. Put it in Inheritable + Ambient so it survives the exec() into bash/Discord.
+                    // caps::raise(None, CapSet::Inheritable, Capability::CAP_SYS_PTRACE)
+                    //     .expect("raise inheritable CAP_SYS_PTRACE");
+                    // caps::raise(None, CapSet::Ambient, Capability::CAP_SYS_PTRACE)
+                    //     .expect("raise ambient CAP_SYS_PTRACE");
 
                     // 4. Strip every other capability so CAP_SYS_PTRACE is the only one
                     //    that survives into the sandboxed process tree.
-                    for cap in caps::all() {
-                        if cap != Capability::CAP_SYS_PTRACE {
-                            let _ = caps::drop(None, CapSet::Permitted, cap);
-                            let _ = caps::drop(None, CapSet::Inheritable, cap);
-                        }
-                    }
-
-                    unsafe {
-                        libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0);
-                        libc::prctl(libc::PR_SET_PTRACER, -1isize as libc::c_ulong, 0, 0, 0);
-                        // right before Command::new(...).exec()
-                        // install_seccomp_filter().expect("failed to install seccomp filter");
-
-                        // Clear ambient caps so bwrap doesn't trip the "Unexpected capabilities" error
-                        // caps::clear(None, CapSet::Ambient).unwrap();
-                        // caps::clear(None, CapSet::Inheritable).unwrap();
-                        // caps::clear(None, CapSet::Permitted).unwrap();
-                        // caps::clear(None, CapSet::Effective).unwrap();
-
-                        // Now safely exec Steam
-                    }             match unsafe { fork() }.unwrap() {
+                    // for cap in caps::all() {
+                    //     if cap != Capability::CAP_SYS_PTRACE {
+                    //         let _ = caps::drop(None, CapSet::Permitted, cap);
+                    //         let _ = caps::drop(None, CapSet::Inheritable, cap);
+                    //     }
+                    // }
+                    //
+                    // unsafe {
+                    // //     libc::prctl(libc::PR_SET_DUMPABLE, 1, 0, 0, 0);
+                    // //     libc::prctl(libc::PR_SET_PTRACER, -1isize as libc::c_ulong, 0, 0, 0);
+                    // //     // right before Command::new(...).exec()
+                    // //     // install_seccomp_filter().expect("failed to install seccomp filter");
+                    // //
+                    // //     // Clear ambient caps so bwrap doesn't trip the "Unexpected capabilities" error
+                    // //     // caps::clear(None, CapSet::Ambient).unwrap();
+                    // //     // caps::clear(None, CapSet::Inheritable).unwrap();
+                    // //     // caps::clear(None, CapSet::Permitted).unwrap();
+                    // //     // caps::clear(None, CapSet::Effective).unwrap();
+                    // //
+                    // //     // Now safely exec Steam
+                    // }
+                    match unsafe { fork() }.unwrap() {
                         ForkResult::Child => {
+                            unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); }
 
                             let err = Command::new("/usr/bin/bash")
-                                .arg("-c")
-                                .arg("/usr/bin/bash")
                                 .exec(); // replaces this process's image; only returns on failure
                             eprintln!("failed to exec shell: {err}");
                             exit(1);
@@ -217,6 +222,7 @@ fn setup_sandbox(home_path: &Path) {
                                         }
                                     }
                                     Ok(nix::sys::wait::WaitStatus::Signaled(pid, sig, _)) => {
+                                        eprintln!("PID {} died from signal {:?}", pid, sig);
                                         if pid == shell_pid {
                                             exit_code = 128 + sig as i32;
                                         }

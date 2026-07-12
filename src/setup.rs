@@ -60,11 +60,14 @@ pub fn create_root(path: &Path, home_path: &Path){
 root:x:0:0:root:/root:/bin/sh\n\
 user:x:1000:1000:user:/home/user:/bin/sh\n"
     ).unwrap();
+    create_dev(&path);
 
     bind_mount(Path::new("/oldroot/srv"),&srv,true).unwrap();
     bind_mount(Path::new("/oldroot/opt") ,&opt,true).unwrap();
 
     bind_mount(Path::new("/oldroot/usr") ,&usr,true).unwrap();
+    bind_mount(Path::new("/oldroot/tmp/.X11-unix") ,&tmp.join(".X11-unix"),true).unwrap();
+
     bind_mount(Path::new("/oldroot/run/user/1000/wayland-1"), &user.join("wayland-1"), false).unwrap();
     bind_mount(Path::new("/oldroot/run/user/1000/pulse"), &user.join("pulse"), false).unwrap();
     bind_mount(Path::new("/oldroot/run/user/1000/speech-dispatcher"), &user.join("speech-dispatcher"), false).unwrap();
@@ -72,7 +75,7 @@ user:x:1000:1000:user:/home/user:/bin/sh\n"
     bind_mount(Path::new("/oldroot/run/user/1000/pipewire-0"), &user.join("pipewire-0"), false).unwrap();
     bind_mount(Path::new("/oldroot/run/user/1000/bus"), &user.join("bus"), false).unwrap();
     bind_mount(Path::new("/oldroot/run/dbus/system_bus_socket"), &run.join("dbus/system_bus_socket"), false).unwrap();
-
+    bind_mount(Path::new("/oldroot/run/user/1000/doc"), &user.join("doc"), false).unwrap();
 
 
     bind_mount(
@@ -97,8 +100,7 @@ user:x:1000:1000:user:/home/user:/bin/sh\n"
 
     println!("{:?}", (Path::new("/oldroot").join(&home_path.strip_prefix("/").unwrap())));
     bind_mount(&*Path::new("/oldroot").join(&home_path.strip_prefix("/").unwrap()), &home, false).unwrap();
-    create_dev(&path);
-    // create_sys(&path);
+    create_sys(&path);
     // mount(Some("devtmpfs"), &dev, Some("devtmpfs"), MsFlags::empty(), None::<&str>).unwrap();
 
     std::os::unix::fs::symlink(Path::new("/usr/bin"),path.join("bin") ).unwrap();
@@ -124,7 +126,7 @@ user:x:1000:1000:user:/home/user:/bin/sh\n"
         Some("mode=0755"),
     ).unwrap();
 
-    bind_mount(Path::new("/oldroot/tmp/.X11-unix"),&tmp.join("X11-unix"),false).unwrap();
+    bind_mount(Path::new("/oldroot/tmp/.X11-unix"),&tmp.join(".X11-unix"),false).unwrap();
 
 }
 
@@ -154,27 +156,33 @@ fn create_dev(path: &Path) {
         bind_mount(Path::new(&format!("/oldroot/dev/{}", name)), &target, false).unwrap();
     }
 
+    std::os::unix::fs::symlink("/proc/self/fd/0", "/dev/stdin").unwrap();
+    std::os::unix::fs::symlink("/proc/self/fd/1", "/dev/stdout").unwrap();
+    std::os::unix::fs::symlink("/proc/self/fd/2", "/dev/stderr").unwrap();
+
+    std::os::unix::fs::symlink("/proc/self/fd", "/dev/fd").unwrap();
+    std::os::unix::fs::symlink("/proc/kcore","/dev/core").unwrap();
+
+
     let shm = dev.join("shm");
-    fs::create_dir_all(&shm).unwrap();
-    bind_mount(Path::new("/oldroot/dev/shm"), &shm, false).unwrap();
     let pts = dev.join("pts");
+
+    fs::create_dir_all(&shm).unwrap();
+    fs::set_permissions(&shm, Permissions::from_mode(0o755)).unwrap();
     fs::create_dir_all(&pts).unwrap();
-    mount(Some("devpts"), &pts, Some("devpts"), MsFlags::empty(), Some("newinstance,ptmxmode=0666,mode=620")).unwrap();
+    fs::set_permissions(&pts, Permissions::from_mode(0o755)).unwrap();
+
+    mount(Some("devpts"), &pts, Some("devpts"), MsFlags::MS_NOSUID|MsFlags::MS_NOEXEC,
+          Some("newinstance,ptmxmode=0666,mode=620")).unwrap();
 
     fs::create_dir_all(&dev.join("dri")).unwrap();
     bind_mount(Path::new("/oldroot/dev/dri"), &dev.join("dri"), false).unwrap();
 
-    fs::create_dir_all(&dev.join("snd")).unwrap();
-    bind_mount(Path::new("/oldroot/dev/snd"), &dev.join("snd"), false).unwrap();
+    // fs::create_dir_all(&dev.join("snd")).unwrap();
+    // bind_mount(Path::new("/oldroot/dev/snd"), &dev.join("snd"), false).unwrap();
 
 
-    std::os::unix::fs::symlink("pts/ptmx", dev.join("ptmx")).unwrap();
-
-    std::os::unix::fs::symlink("/proc/self/fd/0", dev.join("stdin")).unwrap();
-    std::os::unix::fs::symlink("/proc/self/fd/1", dev.join("stdout")).unwrap();
-    std::os::unix::fs::symlink("/proc/self/fd/2", dev.join("stderr")).unwrap();
-    std::os::unix::fs::symlink("/proc/self/fd", dev.join("fd")).unwrap();
-    std::os::unix::fs::symlink("/proc/kcore", dev.join("core")).unwrap();
+    std::os::unix::fs::symlink("/dev/pts/ptmx", "/dev/ptmx").unwrap();
 
 
 }
@@ -194,7 +202,7 @@ fn bind_mount(from: &Path, to: &Path, ro: bool) -> nix::Result<()> {
         Some(from),
         to,
         None::<&str>,
-        MsFlags::MS_BIND|MsFlags::MS_REC|MsFlags::MS_NOSUID|(if ro {MsFlags::MS_RDONLY}else{MsFlags::empty()}),
+        MsFlags::MS_BIND|MsFlags::MS_REC|MsFlags::MS_NOSUID|MsFlags::MS_NODEV|(if ro {MsFlags::MS_RDONLY}else{MsFlags::empty()}),
         None::<&str>,
     );
     result
